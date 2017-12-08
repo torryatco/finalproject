@@ -1,6 +1,8 @@
 #include "Button.h"
 
 int buttonPin = 28;
+int potPin = 33;
+float fatness = 0;
 Button trap(buttonPin);
 
 int kick[32] = { 0 };
@@ -14,13 +16,14 @@ int melodynShift[32] = { 0 };
 int midiKick = 0;
 int midiSnare = 1;
 int midiHiHat = 2;
+int midiBass = 3;
 
 // probabilities
 int kickp[32] = {100, 0, 0, 20, 0, 0, 55, 20, 0, 10, 95, 0, 10, 30, 0, 5, 100, 0, 0, 15, 0, 0, 65, 20, 5, 25, 85, 0, 10, 50, 10, 20 };
 int snarep[32] = {0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 30 };
 int hihatp[32] = {0, 0, 0, 0, 0, 0, 50, 50, 0, 0, 0, 0, 50, 50, 50, 50, 0, 0, 0, 0, 0, 0, 50, 50, 0, 0, 0, 0, 50, 50, 50, 50 };
 int melodyp[32] = {90, 0, 40, 5, 60, 10, 45, 5, 75, 0, 40, 10, 55, 5, 55, 20, 85, 0, 40, 0, 55, 5, 45, 5, 70, 0, 45, 15, 60, 10, 35, 5};
-int scale[15] = {60, 62, 63, 65, 67, 68, 70, 72, 74, 75, 77, 79, 80, 82, 84};
+int scale[37] = {60, 60, 60, 60, 60, 60, 60, 60, 62, 62, 62, 63, 63, 63, 63, 63, 63, 65, 67, 67, 67, 67, 67, 67, 70, 70, 70, 70, 70, 72, 72, 72, 72, 72, 75, 77, 79};
 
 //sequence variables
 int currentStep = 0;
@@ -28,10 +31,12 @@ unsigned long lastStepTime = 0;
 int bpm = 120;
 
 int rando = 0;
+int randn = 0;
 
-int keyChange = 0;
+int keyShift = 0;
 
 boolean play = false;
+boolean start = false;
 
 unsigned long sprinklerTime = 0;
 int sprinklerStep = 0;
@@ -39,9 +44,11 @@ boolean sprinkle = false;
 
 void setup() {
   pinMode(buttonPin, INPUT);
+  pinMode(potPin, INPUT);
   Serial.begin(9600);
   trap.pressHandler(bigButton);
   trap.releaseHandler(bigButtonOff);
+  randomSeed(analogRead(0));
 
 }
 
@@ -49,7 +56,8 @@ void loop() {
   trap.process();
   sequence();
   sprinklerSequence();
-
+  fatness = map(analogRead(potPin), 0, 1023, 0, 127);
+  usbMIDI.sendControlChange(3, fatness, 1);
 }
 
 void sequence() {
@@ -62,7 +70,9 @@ void sequence() {
   currentStep += 1;
   if (currentStep > 31) {
     currentStep = 0;
-    play = true;
+    if (start == true) {
+      play = true;
+    }
   }
 }
 
@@ -83,6 +93,28 @@ void randomizer(int *arr, int *arp) {
 
 }
 
+void noteRandomizer(int *arr, int *rhythm) {
+  for (int i = 0; i < 32; i++) {
+    rando = random(37);
+    if (rhythm[i] == 1) {
+      arr[i] = rando;
+    } else {
+      arr[i] = 0;
+    }
+  }
+}
+
+void bassRandomizer(int *arr, int *kick, int *kickp) {
+  for (int i = 0; i < 32; i++) {
+    rando = random(100);
+    if (kick[i] == 1 && kickp[i] > rando) {
+      arr[i] = 1;
+    } else {
+      arr[i] = 0;
+    }
+  }
+}
+
 void resetAll(int *arr1, int *arr2, int *arr3) {
   for (int i = 0; i < 32; i++) {
     arr1[i] = 0;
@@ -93,14 +125,17 @@ void resetAll(int *arr1, int *arr2, int *arr3) {
 
 void bigButton() {
   Serial.print("press ");
-  play = false;
+  resetAll();
+  start = true;
+  currentStep = 31;
+  keyShift = random(11);
+  bpm = random(51) + 90;
   randomizer(kick, kickp);
   randomizer(snare, snarep);
   randomizer(hihat, hihatp);
   randomizer(melodyr, melodyp);
-  for (int i = 0; i < 32; i++) {
-    Serial.print(hihat[i]);
-  }
+  noteRandomizer(melodyn, melodyr);
+  bassRandomizer(bass, kick, kickp);
 }
 
 void bigButtonOff() {
@@ -127,21 +162,31 @@ void midiSeq() {
         sprinkle = true;
       }
       if (melodyr[i] == 1 && currentStep == i) {
-        usbMIDI.sendNoteOff(60, 0, 1);
-        usbMIDI.sendNoteOn(60, 127, 1);
+        usbMIDI.sendNoteOff(scale[melodyn[i]] + keyShift, 0, 1);
+        usbMIDI.sendNoteOn(scale[melodyn[i]] + keyShift, 127, 1);
+        usbMIDI.sendNoteOff(scale[melodyn[i]] + keyShift, 0, 1);
+      }
+      if (bass[i] == 1 && currentStep == i) {
+        usbMIDI.sendNoteOff(midiBass + keyShift, 0, 1);
+        usbMIDI.sendNoteOn(midiBass + keyShift, 127, 1);
+      }
     }
   }
 }
 
 void sprinklerSequence() {
-
+  if (play == false) return;
   if (millis() < sprinklerTime + (bpmToTempo(bpm)) / 4) return;
   sprinklerTime = millis();
   if (sprinkle == true) {
     usbMIDI.sendNoteOff(midiHiHat, 0, 1);
     usbMIDI.sendNoteOn(midiHiHat, 90, 1);
   }
+}
 
-
+void resetAll() {
+  for (int i = 0; i < 128; i++) {
+    usbMIDI.sendNoteOff(i, 0, 1);
+  }
 }
 
